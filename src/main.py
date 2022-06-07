@@ -626,6 +626,34 @@ class InstallerMain:
 
         return True
 
+    def action_change_boot_params(self, installs):
+        if len(installs) > 1 or self.expert:
+            p_question("Choose an existing installation to configure:")
+            idx = self.choice("Installation", installs)
+            install = installs[idx]
+        else:
+            install = installs[0]
+
+        target_uuid = install.m1n1_efi_part.upper()
+        for part in self.parts:
+            if part.uuid == target_uuid:
+                esp = part
+                break
+        else:
+            p_error("Unable to find the EFI System Partition matching this installation.")
+            return
+
+        logging.info(f"Changing settings of {install.label} ({install.vgid}): ESP {target_uuid} at {esp.name}")
+
+        mountpoint = self.dutil.mount(esp.name)
+        path = os.path.join(mountpoint, install.m1n1_next_obj)
+        try:
+            fd = open(path,'rb+')
+        except EnvironmentError as err:
+            p_error(f"Error opening boot object: {err}")
+
+        # TODO actually change the boot params
+
     def get_vars(self):
         vars = {}
         self.get_display_conf_vars(vars)
@@ -795,6 +823,7 @@ class InstallerMain:
         self.cur_os = None
         self.is_sfr_recovery = self.sysinfo.boot_vgid in (osenum.UUID_SROS, osenum.UUID_FROS)
         default_os = None
+        m1n1_chainloads = []
 
         r = col(YELLOW) + "R" + col()
         b = col(GREEN) + "B" + col()
@@ -808,6 +837,8 @@ class InstallerMain:
             if not p.os:
                 continue
             for os in p.os:
+                if os.m1n1_efi_part:
+                    m1n1_chainloads.append(os)
                 if not os.version:
                     continue
                 state = " "
@@ -847,6 +878,9 @@ class InstallerMain:
         if parts_resizable:
             actions["r"] = "Resize an existing partition to make space for a new OS"
             default = default or "r"
+        if m1n1_chainloads:
+            actions["c"] = "Change boot parameters of existing installation"
+            default = default or "c"
         if self.sysinfo.boot_mode == "one true recoveryOS" and False:
             actions["m"] = "Upgrade bootloader of an existing OS"
 
@@ -867,6 +901,8 @@ class InstallerMain:
             return self.action_install_into_container(parts_empty_apfs)
         elif act == "r":
             return self.action_resize(parts_resizable)
+        elif act == "c":
+            return self.action_change_boot_params(m1n1_chainloads)
         elif act == "m":
             p_error("Unimplemented")
             sys.exit(1)
