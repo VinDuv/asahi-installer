@@ -143,3 +143,59 @@ class SystemInfo:
     def get_int(self, val):
         return struct.unpack("<I", val)[0]
 
+
+class MainMonitorInfo:
+    def __init__(self):
+        display_ifaces = self._get_info()
+
+        logging.info(f"Display interfaces: {display_ifaces}")
+
+        main_iface = None
+        for iface in display_ifaces:
+            if iface["ident"].startswith("disp0,"):
+                main_iface = iface
+                break
+        else:
+            raise Exception("Unable to detect the main monitor interface")
+
+        self.iface = main_iface["ident"]
+        self.internal = not main_iface["external"]
+        self.connected = main_iface["connected"]
+        self.width = main_iface["width"]
+        self.height = main_iface["height"]
+
+    @staticmethod
+    def _get_info():
+        result = subprocess.run(["ioreg", "-ra", "-c", "AppleCLCD2"],
+                                stdout=subprocess.PIPE, check=True)
+
+        if not result.stdout:
+            raise Exception("No display interfaces found under AppleCLCD2 "
+                            "(incompatible macOS version?)")
+
+        data = plistlib.loads(result.stdout)
+
+        display_ifaces = []
+        for props in data:
+            ident = props["IONameMatched"]
+
+            disp_attrs = props.get("DisplayAttributes", {})
+            prod_attrs = disp_attrs.get("ProductAttributes", {})
+            external = props.get("external", False)
+            connected = "TimingElements" in props if external else True
+            product = prod_attrs.get("ProductName")
+            width = disp_attrs.get("NativeFormatHorizontalPixels")
+            height = disp_attrs.get("NativeFormatVerticalPixels")
+
+            info = {
+                "ident": ident,
+                "external": external,
+                "connected": connected,
+                "product": product,
+                "width": width,
+                "height": height,
+            }
+
+            display_ifaces.append(info)
+
+        return display_ifaces

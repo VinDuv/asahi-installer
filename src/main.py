@@ -21,6 +21,8 @@ MIN_INSTALL_FREE = psize("10GB")
 MIN_MACOS_VERSION = "12.3"
 MIN_MACOS_VERSION_EXPERT = "12.1"
 
+RESOLUTION_RE = re.compile(r"^(\d+)x(\d+)(?:@\d\d(?:\.\d\d)?)?$")
+
 @dataclass
 class IPSW:
     version: str
@@ -207,6 +209,9 @@ class InstallerMain:
         self.osins = osinstall.OSInstaller(self.dutil, self.data, template)
         self.osins.load_package()
 
+        if self.osins.needs_vars:
+            self.osins.next_obj_vars = self.get_vars()
+
         self.do_install()
 
     def action_install_into_free(self, avail_free):
@@ -214,6 +219,9 @@ class InstallerMain:
 
         self.osins = osinstall.OSInstaller(self.dutil, self.data, template)
         self.osins.load_package()
+
+        if self.osins.needs_vars:
+            self.osins.next_obj_vars = self.get_vars()
 
         min_size = STUB_SIZE + self.osins.min_size
         print()
@@ -617,6 +625,75 @@ class InstallerMain:
         print()
 
         return True
+
+    def get_vars(self):
+        vars = {}
+        self.get_display_conf_vars(vars)
+        return vars
+
+    def get_display_conf_vars(self, vars):
+        main_monitor = system.MainMonitorInfo()
+
+        if main_monitor.internal:
+            # Main monitor is internal so it needs no special configuration
+            return
+
+        if not main_monitor.connected:
+            p_warning("No monitor seems to be attached to the primary display interface.")
+            p_warning("On the Mac mini/Studio, your monitor needs to be connected using HDMI.")
+            p_warning("You will not get an image during boot, and will only get an image in Linux when")
+            p_warning("the display driver is functional.")
+
+            if not self.yesno("Do you want to continue?"):
+                sys.exit()
+
+            return
+
+        resolution = f"{main_monitor.width}x{main_monitor.height}"
+        retina = self.res_is_retina(main_monitor.width, main_monitor.height)
+
+        if self.expert:
+            p_message("Configure the display settings that will be used during boot (and in the ")
+            p_message("installed OS, unless an advanced display driver is used).")
+            p_plain("Those settings affect the monitor connected to the primary display interface")
+            p_plain("(HDMI on the Mac mini/Studio). Other monitors will not be available during boot.")
+            p_plain("You can specify a refresh rate after the resolution: [width]x[height]@[rr].[rr].")
+            p_plain("The default settings are usually what you want.")
+            p_plain("You will be able to change these settings later by re-running the installer.")
+
+            resolution, retina = self.prompt_display_settings(resolution)
+
+        settings = [resolution]
+        if retina:
+            settings.append('retina')
+
+        vars['display'] =  ','.join(settings)
+
+    def prompt_display_settings(self, default_res, default_retina=None):
+        while True:
+            self.flush_input()
+            res = input_prompt(f"Resolution: [{default_res}] ").strip()
+            if res == "":
+                res = default_res
+
+            m = RESOLUTION_RE.match(res)
+            if m:
+                width, height = (int(i) for i in m.groups())
+                if min(width, height) > 0:
+                    selected_resolution = res
+                    break
+
+            p_warning("Invalid input. Expected [width]x[height]")
+
+        if default_retina is None or selected_resolution != default_res:
+            default_retina = self.res_is_retina(width, height)
+        retina = self.yesno("Enable retina scaling", default_retina)
+
+        return selected_resolution, retina
+
+    @staticmethod
+    def res_is_retina(width, height):
+        return width > 1920 and height > 1080
 
     def main(self):
         print()

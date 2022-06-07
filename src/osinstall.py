@@ -9,6 +9,7 @@ class OSInstaller(PackageInstaller):
         super().__init__()
         self.dutil = dutil
         self.data = data
+        self.next_obj_vars = None
         self.template = template
         self.name = template["default_os_name"]
         self.ucache = None
@@ -27,6 +28,9 @@ class OSInstaller(PackageInstaller):
     @property
     def needs_firmware(self):
         return any(p.get("copy_firmware", False) for p in self.template["partitions"])
+    @property
+    def needs_vars(self):
+        return "next_object" in self.template and self.template.get("append_vars", False)
 
     def align(self, v):
         return align_up(v, self.PART_ALIGNMENT)
@@ -157,3 +161,15 @@ class OSInstaller(PackageInstaller):
             fd.write(m1n1_data)
 
         logging.info(f"Built boot object at {boot_obj_path}")
+
+        if self.needs_vars and self.next_obj_vars:
+            logging.info(f"Adding vars to next object:")
+            extra_vars = b""
+            for key, value in self.next_obj_vars.items():
+                var = f"{key}={value}"
+                logging.info(f"  {var}")
+                extra_vars += var.encode("ascii") + b"\n"
+
+            mountpoint = self.dutil.mount(self.efi_part.name)
+            with open(os.path.join(mountpoint, next_object), "ab") as fd:
+                fd.write(extra_vars)
